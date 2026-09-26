@@ -1,0 +1,19 @@
+{
+  "actorSpecification": 1,
+  "name": "cftc-cot-reports-ts",
+  "title": "CFTC COT Reports & Orderflow Analytics [TypeScript]",
+  "description": "High-performance TypeScript & Node.js Actor that scrapes, normalizes, and analyzes CFTC Commitment of Traders (COT) reports from CFTC.gov. Computes Smart Money orderflow and institutional rankings.",
+  "version": "1.0.0",
+  "meta": {
+    "templateId": "ts-start"
+  },
+  "dockerfilePath": "./Dockerfile",
+  "environmentVariables": {
+    "NODE_ENV": "production"
+  },
+  "output": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json",
+    "keyValueStore": "./key_value_store_schema.json"
+  }
+}
