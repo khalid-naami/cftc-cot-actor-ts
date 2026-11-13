@@ -10,6 +10,19 @@ interface ActorInput {
     outputFormat?: 'flat_records' | 'aggregated_by_asset';
 }
 
+
+function sanitizeRecord<T>(obj: T): T {
+    if (Array.isArray(obj)) return obj.map((item) => sanitizeRecord(item)) as unknown as T;
+    if (!obj || typeof obj !== 'object') return obj;
+    const clean: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+        if (v !== null && v !== undefined && !(typeof v === 'number' && Number.isNaN(v))) {
+            clean[k] = Array.isArray(v) ? v.map((i) => sanitizeRecord(i)) : v && typeof v === 'object' ? sanitizeRecord(v) : v;
+        }
+    }
+    return clean as T;
+}
+
 await Actor.init();
 
 try {
@@ -36,50 +49,60 @@ try {
     );
 
     if (flatRecords.length === 0) {
-        log.warning('No CFTC COT records were extracted. Please verify the requested filters.');
-        await Actor.exit({ exitCode: 0 });
-    }
-
-    log.info(`Successfully parsed ${flatRecords.length} records across ${assetRecordsMap.size} assets.`);
-
-    // 2. Compute Smart Money Rankings
-    if (includeRankings && assetRecordsMap.size > 0) {
-        log.info('Computing Smart Money Orderflow Rankings...');
-        const rankingsData = calculateOrderflowRankings(assetRecordsMap);
-        await Actor.setValue('ORDERFLOW_RANKINGS', rankingsData);
-        log.info('Saved ORDERFLOW_RANKINGS into Key-Value Store.');
-    }
-
-    // 3. Save to Apify Dataset
-    if (outputFormat === 'aggregated_by_asset') {
-        const aggregated: Array<Record<string, unknown>> = [];
-        for (const [assetName, records] of assetRecordsMap.entries()) {
-            aggregated.push({
-                asset: assetName,
-                category: records[0]?.category || 'other',
-                latest_date: records[0]?.date || '',
-                total_reports: records.length,
-                history: records,
-            });
-        }
-        await Actor.pushData(aggregated);
-        log.info(`Pushed ${aggregated.length} aggregated asset groups to Apify Dataset.`);
+        const msg = 'No CFTC COT records were extracted. Please verify the requested filters.';
+        log.warning(msg);
+        await Actor.setValue('OUTPUT', {
+            status: 'NO_DATA',
+            runtime: 'TypeScript/Node.js',
+            message: msg,
+            total_records: 0,
+            assets_count: 0,
+            years_processed: selectedYears,
+            rankings_included: false,
+        });
+        await Actor.fail(msg);
     } else {
-        await Actor.pushData(flatRecords);
-        log.info(`Pushed ${flatRecords.length} flat records to Apify Dataset.`);
+        log.info(`Successfully parsed ${flatRecords.length} records across ${assetRecordsMap.size} assets.`);
+
+        // 2. Compute Smart Money Rankings
+        if (includeRankings && assetRecordsMap.size > 0) {
+            log.info('Computing Smart Money Orderflow Rankings...');
+            const rankingsData = calculateOrderflowRankings(assetRecordsMap);
+            await Actor.setValue('ORDERFLOW_RANKINGS', rankingsData);
+            log.info('Saved ORDERFLOW_RANKINGS into Key-Value Store.');
+        }
+
+        // 3. Save to Apify Dataset
+        if (outputFormat === 'aggregated_by_asset') {
+            const aggregated: Array<Record<string, unknown>> = [];
+            for (const [assetName, records] of assetRecordsMap.entries()) {
+                aggregated.push({
+                    asset: assetName,
+                    category: records[0]?.category || 'other',
+                    latest_date: records[0]?.date || '',
+                    total_reports: records.length,
+                    history: records,
+                });
+            }
+            await Actor.pushData(sanitizeRecord(aggregated));
+            log.info(`Pushed ${aggregated.length} aggregated asset groups to Apify Dataset.`);
+        } else {
+            await Actor.pushData(sanitizeRecord(flatRecords));
+            log.info(`Pushed ${flatRecords.length} flat records to Apify Dataset.`);
+        }
+
+        // 4. Save Run Summary to Key-Value Store
+        await Actor.setValue('OUTPUT', {
+            status: 'SUCCESS',
+            runtime: 'TypeScript/Node.js',
+            total_records: flatRecords.length,
+            assets_count: assetRecordsMap.size,
+            years_processed: selectedYears,
+            rankings_included: includeRankings,
+        });
+
+        log.info('Actor run completed successfully.');
     }
-
-    // 4. Save Run Summary to Key-Value Store
-    await Actor.setValue('OUTPUT', {
-        status: 'SUCCESS',
-        runtime: 'TypeScript/Node.js',
-        total_records: flatRecords.length,
-        assets_count: assetRecordsMap.size,
-        years_processed: selectedYears,
-        rankings_included: includeRankings,
-    });
-
-    log.info('Actor run completed successfully.');
 } catch (error) {
     log.error(`Actor failed with error: ${error}`);
     throw error;
